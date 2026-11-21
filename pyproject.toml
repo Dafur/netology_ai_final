@@ -1,0 +1,37 @@
+# Конфигурация линтера и форматтера Ruff.
+# Запуск: ruff check .  и  ruff format .
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["."]
+extend-exclude = [".venv", "venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "BLE", # flake8-blind-except
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    # Длину строк контролирует форматтер; длинные комментарии/строки допустимы.
+    "E501",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["api", "cache", "config", "llm", "services", "errors"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI Depends() в значениях по умолчанию — штатный паттерн.
+extend-immutable-calls = ["fastapi.Depends"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
