@@ -68,7 +68,7 @@ def cache() -> InMemoryLLMCache:
 
 @pytest.fixture()
 def client(cache: InMemoryLLMCache):
-    """TestClient без обращения к реальному YandexGPT и Redis."""
+    """TestClient без обращения к реальному YandexGPT."""
     fake = FakeLLMClient()
     app.dependency_overrides[get_llm_client] = lambda: fake
     app.dependency_overrides[get_cache] = lambda: cache

@@ -94,23 +94,9 @@ class Settings:
     cache_ttl: int = field(
         default_factory=lambda: _env_int("CACHE_TTL", 600)
     )
-    cache_key_prefix: str = field(
-        default_factory=lambda: os.getenv("CACHE_KEY_PREFIX", "llm:cache:")
-    )
-    redis_url: str = field(
-        default_factory=lambda: os.getenv("REDIS_URL", "")
-    )
-    redis_host: str = field(
-        default_factory=lambda: os.getenv("REDIS_HOST", "")
-    )
-    redis_port: int = field(
-        default_factory=lambda: _env_int("REDIS_PORT", 6379)
-    )
-    redis_db: int = field(
-        default_factory=lambda: _env_int("REDIS_DB", 0)
-    )
-    redis_password: str = field(
-        default_factory=lambda: os.getenv("REDIS_PASSWORD", "")
+    # Максимальное число записей в in-memory кэше (LRU-вытеснение).
+    cache_max_entries: int = field(
+        default_factory=lambda: _env_int("CACHE_MAX_ENTRIES", 1000)
     )
     # Логирование.
     log_level: str = field(
@@ -138,24 +124,6 @@ class Settings:
         return (
             f"gpt://{self.yandex_gpt_folder_id}/"
             f"{self.yandex_gpt_model}/{self.yandex_gpt_model_version}"
-        )
-
-    @property
-    def redis_dsn(self) -> str:
-        """DSN Redis: явный ``REDIS_URL`` или собранный из компонентов.
-
-        Пустая строка означает, что Redis не настроен.
-        """
-        if self.redis_url:
-            return self.redis_url
-        if not self.redis_host:
-            return ""
-        credentials = ""
-        if self.redis_password:
-            credentials = f":{self.redis_password}@"
-        return (
-            f"redis://{credentials}{self.redis_host}:"
-            f"{self.redis_port}/{self.redis_db}"
         )
 
 

@@ -7,7 +7,6 @@ from functools import lru_cache
 
 from cache.base import NullCache, SupportsCache
 from cache.memory import InMemoryLLMCache
-from cache.redis_cache import RedisLLMCache
 from config.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -16,10 +15,10 @@ logger = logging.getLogger(__name__)
 def create_cache(settings: Settings | None = None) -> SupportsCache:
     """Создаёт кэш по настройкам приложения.
 
-    Приоритет:
-    1. кэш отключён -> :class:`NullCache`;
-    2. задан Redis DSN -> :class:`RedisLLMCache`;
-    3. Redis не настроен -> :class:`InMemoryLLMCache` (dev/test fallback).
+    Кэш работает в памяти процесса:
+
+    - при ``CACHE_ENABLED=false`` возвращается :class:`NullCache`;
+    - иначе — :class:`InMemoryLLMCache` с TTL и ограничением числа записей.
     """
     settings = settings or get_settings()
 
@@ -30,31 +29,19 @@ def create_cache(settings: Settings | None = None) -> SupportsCache:
         )
         return NullCache()
 
-    dsn = settings.redis_dsn
-    if dsn:
-        logger.info(
-            "cache_backend_selected",
-            extra={
-                "event": "cache_backend_selected",
-                "backend": "redis",
-                "ttl": settings.cache_ttl,
-            },
-        )
-        return RedisLLMCache(
-            url=dsn,
-            ttl=settings.cache_ttl,
-            key_prefix=settings.cache_key_prefix,
-        )
-
-    logger.warning(
+    logger.info(
         "cache_backend_selected",
         extra={
             "event": "cache_backend_selected",
             "backend": "memory",
-            "reason": "REDIS_URL/REDIS_HOST не заданы",
+            "ttl": settings.cache_ttl,
+            "max_entries": settings.cache_max_entries,
         },
     )
-    return InMemoryLLMCache(ttl=settings.cache_ttl)
+    return InMemoryLLMCache(
+        ttl=settings.cache_ttl,
+        max_entries=settings.cache_max_entries,
+    )
 
 
 @lru_cache(maxsize=1)
