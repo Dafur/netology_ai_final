@@ -5,22 +5,27 @@
 * JSON-форматтер для машиночитаемых логов (структурированный формат);
 * человекочитаемый форматтер для локальной разработки;
 * контекст ``request_id``, автоматически добавляемый во все записи;
+* запись логов в stdout и в файл с ротацией;
 * функцию :func:`configure_logging` для инициализации корневого логгера.
 
 Использование::
 
     from config.logging import configure_logging, set_request_id
 
-    configure_logging(level="INFO", json_logs=True)
+    configure_logging(level="INFO", json_logs=True, log_file="logs/app.log")
 """
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import logging
+import os
 import sys
 from datetime import UTC, datetime
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any
 
 # Контекст текущего HTTP-запроса. Значение живёт в пределах одной задачи
@@ -34,7 +39,16 @@ _RESERVED_ATTRS = set(
     logging.LogRecord("", 0, "", 0, "", (), None).__dict__.keys()
 ) | {"message", "asctime"}
 
+# Маркер общий для всех обработчиков, добавленных этим модулем, и отдельные
+# маркеры для консольного и файлового — чтобы обновлять их независимо.
 _HANDLER_MARKER = "_structured_logging_handler"
+_STREAM_HANDLER_MARKER = "_structured_logging_stream_handler"
+_FILE_HANDLER_MARKER = "_structured_logging_file_handler"
+_FILE_PATH_ATTR = "_structured_logging_file_path"
+
+# Значения по умолчанию для файлового логирования.
+DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_BACKUP_COUNT = 5
 
 
 class RequestIdLogRecord(logging.LogRecord):
@@ -144,35 +158,150 @@ class HumanFormatter(logging.Formatter):
         return " ".join(parts)
 
 
-def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
+def _find_handler(
+    root: logging.Logger, marker: str
+) -> logging.Handler | None:
+    """Возвращает обработчик с заданным маркером, если он уже добавлен."""
+    for existing in root.handlers:
+        if getattr(existing, marker, False):
+            return existing
+    return None
+
+
+def _add_handler(
+    root: logging.Logger, handler: logging.Handler, marker: str
+) -> None:
+    """Помечает обработчик как собственный и добавляет его в логгер."""
+    setattr(handler, marker, True)
+    setattr(handler, _HANDLER_MARKER, True)
+    root.addHandler(handler)
+
+
+def _remove_handler(root: logging.Logger, handler: logging.Handler) -> None:
+    """Удаляет обработчик из логгера и закрывает его."""
+    root.removeHandler(handler)
+    # Закрытие не должно ломать настройку логирования.
+    with contextlib.suppress(Exception):
+        handler.close()
+
+
+def _configure_handler(
+    handler: logging.Handler,
+    formatter: logging.Formatter,
+    level: int,
+    request_id_filter: RequestIdFilter,
+) -> None:
+    """Применяет к обработчику форматтер, уровень и фильтр ``request_id``."""
+    handler.setFormatter(formatter)
+    handler.setLevel(level)
+    if not any(
+        isinstance(item, RequestIdFilter) for item in handler.filters
+    ):
+        handler.addFilter(request_id_filter)
+
+
+def _configure_file_handler(
+    root: logging.Logger,
+    log_file: str | os.PathLike[str] | None,
+    formatter: logging.Formatter,
+    level: int,
+    request_id_filter: RequestIdFilter,
+    max_bytes: int,
+    backup_count: int,
+) -> None:
+    """Создаёт/обновляет файловый обработчик с ротацией.
+
+    ``log_file=None`` или пустая строка отключают запись в файл.
+    """
+    existing = _find_handler(root, _FILE_HANDLER_MARKER)
+
+    if not log_file:
+        if existing is not None:
+            _remove_handler(root, existing)
+        return
+
+    target = Path(os.fspath(log_file)).expanduser().absolute()
+    target_key = str(target)
+
+    if existing is not None:
+        if getattr(existing, _FILE_PATH_ATTR, None) == target_key:
+            _configure_handler(existing, formatter, level, request_id_filter)
+            return
+        # Путь изменился — пересоздаём обработчик.
+        _remove_handler(root, existing)
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handler: logging.Handler = RotatingFileHandler(
+            target,
+            maxBytes=max(0, max_bytes),
+            backupCount=max(0, backup_count),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        # Не роняем приложение из-за недоступного пути к лог-файлу.
+        logging.getLogger(__name__).warning(
+            "log_file_unavailable",
+            extra={
+                "event": "log_file_unavailable",
+                "log_file": target_key,
+                "error": str(exc),
+            },
+        )
+        return
+
+    setattr(handler, _FILE_PATH_ATTR, target_key)
+    _add_handler(root, handler, _FILE_HANDLER_MARKER)
+    _configure_handler(handler, formatter, level, request_id_filter)
+
+
+def configure_logging(
+    level: str = "INFO",
+    json_logs: bool = True,
+    log_file: str | os.PathLike[str] | None = None,
+    *,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    backup_count: int = DEFAULT_BACKUP_COUNT,
+) -> None:
     """Настраивает корневой логгер приложения.
 
-    Функция идемпотентна: повторный вызов обновляет уровень и формат
-    единственного собственного обработчика, не удаляя сторонние
-    (например, обработчик ``pytest``/``caplog``).
+    Логи всегда пишутся в stdout, а при заданном ``log_file`` — ещё и в файл
+    с ротацией. Функция идемпотентна: повторный вызов обновляет уровень и
+    формат собственных обработчиков, не удаляя сторонние (например,
+    обработчик ``pytest``/``caplog``).
 
     Args:
         level: уровень логирования (DEBUG, INFO, WARNING, ERROR, CRITICAL).
         json_logs: использовать структурированный JSON-формат.
+        log_file: путь к файлу логов; ``None``/пустая строка отключают файл.
+        max_bytes: максимальный размер файла до ротации в байтах
+            (``0`` — без ротации по размеру).
+        backup_count: количество хранимых резервных копий файла.
     """
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     root = logging.getLogger()
+    formatter: logging.Formatter = (
+        JsonFormatter() if json_logs else HumanFormatter()
+    )
+    request_id_filter = RequestIdFilter()
 
-    handler: logging.Handler | None = None
-    for existing in root.handlers:
-        if getattr(existing, _HANDLER_MARKER, False):
-            handler = existing
-            break
+    stream_handler = _find_handler(root, _STREAM_HANDLER_MARKER)
+    if stream_handler is None:
+        stream_handler = logging.StreamHandler(sys.stdout)
+        _add_handler(root, stream_handler, _STREAM_HANDLER_MARKER)
+    _configure_handler(
+        stream_handler, formatter, numeric_level, request_id_filter
+    )
 
-    if handler is None:
-        handler = logging.StreamHandler(sys.stdout)
-        setattr(handler, _HANDLER_MARKER, True)
-        root.addHandler(handler)
-
-    handler.setFormatter(JsonFormatter() if json_logs else HumanFormatter())
-    handler.setLevel(numeric_level)
-    if not any(isinstance(item, RequestIdFilter) for item in handler.filters):
-        handler.addFilter(RequestIdFilter())
+    _configure_file_handler(
+        root,
+        log_file,
+        formatter,
+        numeric_level,
+        request_id_filter,
+        max_bytes,
+        backup_count,
+    )
 
     root.setLevel(numeric_level)
 

@@ -30,7 +30,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Настраивает логирование и освобождает ресурсы при остановке."""
     settings = get_settings()
-    configure_logging(settings.log_level, settings.log_json)
+    configure_logging(
+        settings.log_level,
+        settings.log_json,
+        log_file=settings.log_file,
+        max_bytes=settings.log_file_max_bytes,
+        backup_count=settings.log_file_backup_count,
+    )
     logger.info(
         "app_started",
         extra={

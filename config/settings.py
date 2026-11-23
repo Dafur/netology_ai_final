@@ -119,6 +119,18 @@ class Settings:
     log_json: bool = field(
         default_factory=lambda: _env_bool("LOG_JSON", True)
     )
+    # Путь к файлу логов; пустая строка отключает запись в файл.
+    log_file: str = field(
+        default_factory=lambda: os.getenv("LOG_FILE", "logs/app.log")
+    )
+    log_file_max_bytes: int = field(
+        default_factory=lambda: _env_int(
+            "LOG_FILE_MAX_BYTES", 10 * 1024 * 1024
+        )
+    )
+    log_file_backup_count: int = field(
+        default_factory=lambda: _env_int("LOG_FILE_BACKUP_COUNT", 5)
+    )
 
     @property
     def model_uri(self) -> str:

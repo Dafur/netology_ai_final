@@ -61,7 +61,13 @@ pip install -r requirements-dev.txt
 ### Логирование
 
 - `LOG_LEVEL` — `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`;
-- `LOG_JSON=true` — структурированный JSON, `false` — человекочитаемый формат.
+- `LOG_JSON=true` — структурированный JSON, `false` — человекочитаемый формат;
+- `LOG_FILE` — путь к файлу логов (по умолчанию `logs/app.log`,
+  создаётся автоматически; пустое значение отключает запись в файл);
+- `LOG_FILE_MAX_BYTES` — максимальный размер файла до ротации (10 МБ);
+- `LOG_FILE_BACKUP_COUNT` — количество хранимых резервных копий (5).
+
+Логи всегда выводятся в stdout и дополнительно пишутся в файл с ротацией.
 
 ## Запуск
 
@@ -151,8 +157,9 @@ Swagger: http://127.0.0.1:8000/docs
 
 ## Логирование
 
-[`config/logging.py`](config/logging.py) настраивает JSON-формат и контекст
-`request_id`. Ключевые события:
+[`config/logging.py`](config/logging.py) настраивает JSON-формат, контекст
+`request_id` и запись в stdout + файл с ротацией (по умолчанию
+`logs/app.log`). Ключевые события:
 
 - `request_started` / `request_finished` — HTTP-запрос, статус, длительность;
 - `llm_request_started`, `llm_prompt`, `llm_response_received` — обращение к LLM;
